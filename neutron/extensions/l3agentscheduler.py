@@ -39,6 +39,9 @@ L3_ROUTER = 'l3-router'
 L3_ROUTERS = L3_ROUTER + 's'
 L3_AGENT = 'l3-agent'
 L3_AGENTS = L3_AGENT + 's'
+FIREWALL = 'firewall'
+FIREWALLS = FIREWALL + 's'
+
 
 
 class RouterSchedulerController(wsgi.Controller):
@@ -99,6 +102,64 @@ class L3AgentsHostingRouterController(wsgi.Controller):
         return plugin.list_l3_agents_hosting_router(
             request.context, kwargs['router_id'])
 
+class FirewallSchedulerController(wsgi.Controller):
+    def get_plugin(self):
+        plugin = manager.NeutronManager.get_service_plugins().get(
+            service_constants.FIREWALL)
+        if not plugin:
+            LOG.error(_('No plugin for Firewall registered to handle '
+                        'firewall scheduling'))
+            msg = _('The resource could not be found.')
+            raise webob.exc.HTTPNotFound(msg)
+        return plugin
+
+    def index(self, request, **kwargs):
+        plugin = self.get_plugin()
+        policy.enforce(request.context,
+                       "get_%s" % FIREWALLS,
+                       {})
+        return plugin.list_firewalls_on_l3_agent(
+            request.context, kwargs['agent_id'])
+
+    def create(self, request, body, **kwargs):
+        plugin = self.get_plugin()
+        policy.enforce(request.context,
+                       "create_%s" % FIREWALLS,
+                       {})
+        return plugin.add_firewall_to_l3_agent(
+            request.context,
+            kwargs['agent_id'],
+            body['firewall_id'])
+
+    def delete(self, request, id, **kwargs):
+        plugin = self.get_plugin()
+        policy.enforce(request.context,
+                       "delete_%s" % FIREWALL,
+                       {})
+        return plugin.remove_firewall_from_l3_agent(
+            request.context, kwargs['agent_id'], id)
+
+
+class L3AgentsHostingFirewallController(wsgi.Controller):
+    def get_plugin(self):
+        plugin = manager.NeutronManager.get_service_plugins().get(
+            service_constants.FIREWALL)
+        if not plugin:
+            LOG.error(_('No plugin for FwaaS registered to handle '
+                        'firewall scheduling'))
+            msg = _('The resource could not be found.')
+            raise webob.exc.HTTPNotFound(msg)
+        return plugin
+
+    def index(self, request, **kwargs):
+        plugin = manager.NeutronManager.get_service_plugins().get(
+            service_constants.FIREWALL)
+        policy.enforce(request.context,
+                       "get_%s" % FIREWALLS,
+                       {})
+        return plugin.list_l3_agents_hosting_firewall(
+            request.context, kwargs['firewall_id'])
+
 
 class L3agentscheduler(extensions.ExtensionDescriptor):
     """Extension class supporting l3 agent scheduler.
@@ -136,10 +197,23 @@ class L3agentscheduler(extensions.ExtensionDescriptor):
         exts.append(extensions.ResourceExtension(
             L3_ROUTERS, controller, parent))
 
+        controller = resource.Resource(FirewallSchedulerController(),
+                                       base.FAULT_MAP)
+        exts.append(extensions.ResourceExtension(
+            FIREWALLS, controller, parent))
+
         parent = dict(member_name="router",
                       collection_name="routers")
 
         controller = resource.Resource(L3AgentsHostingRouterController(),
+                                       base.FAULT_MAP)
+        exts.append(extensions.ResourceExtension(
+            L3_AGENTS, controller, parent))
+
+        parent = dict(member_name="firewall",
+                      collection_name="firewalls")
+
+        controller = resource.Resource(L3AgentsHostingFirewallController(),
                                        base.FAULT_MAP)
         exts.append(extensions.ResourceExtension(
             L3_AGENTS, controller, parent))
@@ -148,6 +222,20 @@ class L3agentscheduler(extensions.ExtensionDescriptor):
     def get_extended_resources(self, version):
         return {}
 
+
+class FirewallHostedByL3Agent(exceptions.Conflict):
+    message = _("The firewall %(firewall_id)s has been already hosted"
+                " by the L3 Agent %(agent_id)s.")
+
+
+class FirewallSchedulingFailed(exceptions.Conflict):
+    message = _("Failed scheduling firewall %(firewall_id)s to"
+                " the L3 Agent %(agent_id)s.")
+
+
+class FirewallNotHostedByL3Agent(exceptions.Conflict):
+    message = _("The firewall %(firewall_id)s is not hosted"
+                " by L3 agent %(agent_id)s.")
 
 class InvalidL3Agent(agent.AgentNotFound):
     message = _("Agent %(id)s is not a L3 Agent or has been disabled")
@@ -188,4 +276,20 @@ class L3AgentSchedulerPluginBase(object):
 
     @abstractmethod
     def list_l3_agents_hosting_router(self, context, router_id):
+        pass
+
+    @abstractmethod
+    def add_firewall_to_l3_agent(self, context, id, firewall_id):
+        pass
+
+    @abstractmethod
+    def remove_firewall_from_l3_agent(self, context, id, firewall_id):
+        pass
+
+    @abstractmethod
+    def list_firewalls_on_l3_agent(self, context, id):
+        pass
+
+    @abstractmethod
+    def list_l3_agents_hosting_firewall(self, context, router_id):
         pass
